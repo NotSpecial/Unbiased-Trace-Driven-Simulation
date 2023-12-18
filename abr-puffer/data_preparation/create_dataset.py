@@ -12,6 +12,7 @@ import json
 import istarmap
 from multiprocessing import Pool
 import argparse
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description='Auto experiment launch')
 parser.add_argument('--dir', type=str, required=True, help='Puffer dataset directory')
@@ -298,9 +299,12 @@ def get_mapper(path_orig: str) -> Dict[int, str]:
     path_set = f"{path_orig}/expt_settings.log"
     url_set = 'https://storage.googleapis.com/puffer-data-release/2022-09-19T11_2022-09-20T11/logs/expt_settings'
     if os.path.exists(path_set):
-        os.remove(path_set)
-    wget.download(url_set, path_set)
-    print()
+        # ALEX: don't load again!
+        #os.remove(path_set)
+        pass
+    else:
+        wget.download(url_set, path_set)
+        print()
 
     mapper = {}
     with open(path_set, "r") as f:
@@ -583,9 +587,31 @@ def apply_extent(today: datetime.datetime, path_cooked: str):
         ids_new.append(traj_id)
         keys_new.append(traj_key)
 
+    trajs_new = np.array(trajs_new, dtype=object)  # Alex: seems needed!
     np.save(f"{path_cooked}/{date_string}_trajs.npy", trajs_new)
     np.save(f"{path_cooked}/{date_string}_ids_translated.npy", ids_new)
     np.save(f"{path_cooked}/{date_string}_keys.npy", keys_new)
+
+
+def process(today: datetime.datetime,
+            mapper: Dict[int, str],
+            path_cooked: str,
+            path_orig: str):
+    """Apply all actions for a single day.
+
+    ALEX: added by me so I can easier check whats done and don't need to
+    re-run all!
+    """
+    get_all_length_day(today, mapper, path_cooked, path_orig)
+    get_extent_day(today, path_cooked)
+    apply_extent(today, path_cooked)
+    done_file(today, path_cooked).touch()
+
+
+def done_file(today, path_cooked):
+    """ALEX: added to mark things as done."""
+    date_string = "%d-%02d-%02d" % (today.year, today.month, today.day)
+    return Path(f"{path_cooked}/{date_string}_done")
 
 
 def main():
@@ -598,16 +624,28 @@ def main():
     all_days = [start_date + datetime.timedelta(days=x) for x in range((end_date-start_date).days+1)]
 
     with Pool(32) as pool:
-        pool_args = [(day, mapper, f"{args.dir}/cooked/", f"{args.dir}/orig/") for day in all_days]
-        for _ in tqdm(pool.istarmap(get_all_length_day, pool_args), total=len(pool_args)):
+        path_cooked = f"{args.dir}/cooked/"
+        remaining_days = [
+            day for day in all_days
+            if not done_file(day, path_cooked).is_file()
+        ]
+        print("%i/%i days left to process." % (len(remaining_days),
+                                               len(all_days)))
+        pool_args = [(day, mapper, path_cooked, f"{args.dir}/orig/")
+                     for day in remaining_days]
+        for _ in tqdm(pool.istarmap(process, pool_args), total=len(pool_args)):
             pass
 
-        pool_args = [(day, f"{args.dir}/cooked/") for day in all_days]
-        for _ in tqdm(pool.istarmap(get_extent_day, pool_args), total=len(pool_args)):
-            pass
+        # pool_args = [(day, mapper, f"{args.dir}/cooked/", f"{args.dir}/orig/") for day in all_days]
+        # for _ in tqdm(pool.istarmap(get_all_length_day, pool_args), total=len(pool_args)):
+        #     pass
 
-        for _ in tqdm(pool.istarmap(apply_extent, pool_args), total=len(pool_args)):
-            pass
+        # pool_args = [(day, f"{args.dir}/cooked/") for day in all_days]
+        # for _ in tqdm(pool.istarmap(get_extent_day, pool_args), total=len(pool_args)):
+        #     pass
+
+        # for _ in tqdm(pool.istarmap(apply_extent, pool_args), total=len(pool_args)):
+        #     pass
 
 
 if __name__ == '__main__':
