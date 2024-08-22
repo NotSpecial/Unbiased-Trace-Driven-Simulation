@@ -1,0 +1,3 @@
+[tool.ruff]
+typing-modules = ["experiment_helpers.typing"]
+line-length = 80
